@@ -103,7 +103,7 @@ char* MakeData(short& no, FILE* f, int& datalen)
 }
 
 //制作ERROR数据包
-char* ErrorPack(short errorcode, int& datalen)
+char* ErrorPack(short errorcode, int& datalen, FILE* fp)
 {
 	char errormessage[50] = "Unknown error";
 	switch (errorcode)
@@ -132,18 +132,18 @@ char* ErrorPack(short errorcode, int& datalen)
 	}
 	int len = strlen(errormessage);
 	char* buf = new char[4 + len + 1];
-		buf[0] = 0x00;
-		buf[1] = 0x05;
-		errorcode = htons(errorcode);
-		memcpy(buf + 2, &errorcode, 2);
+	buf[0] = 0x00;
+	buf[1] = 0x05;
+	errorcode = htons(errorcode);
+	memcpy(buf + 2, &errorcode, 2);
 	memcpy(buf + 4, errormessage, len + 1);
 	datalen = 4 + len + 1;
-	//if (fp != NULL) {
-	//	print_time(fp);
-	//	fprintf(fp, "Error %d: %s\n", errorcode, errormessage);
-	//}
-		return buf;
+	if (fp != NULL) {
+		//print_time(fp);
+		fprintf(fp, "Error %d : %s\n", errorcode, errormessage);
 	}
+	return buf;
+}
 
 //按照“年-月-日-时-分-秒”的格式输出当前时间，用于构造日志文件
 void print_time(FILE* fp)
@@ -157,7 +157,8 @@ void print_time(FILE* fp)
 	return;
 }
 
-void* handleClient(sockaddr_in client, int len, char* request)
+//处理函数
+void handleClient(sockaddr_in client, int len, char* request)
 {
 	short op;
 	char name[1000], type[15];
@@ -192,7 +193,8 @@ void* handleClient(sockaddr_in client, int len, char* request)
 			std::cout << "File " << name << " open failed!" << std::endl;
 			fprintf(fp, "File not found or open failed\n");
 			int datalen = 0;
-			char* errdata = ErrorPack(1, datalen);
+			print_time(fp);
+			char* errdata = ErrorPack(1, datalen, fp);
 			sendlen = sendto(sock, errdata, datalen, 0, (sockaddr*)&client, sizeof(client));
 			Killtime = 1;
 			while (sendlen != datalen) {
@@ -203,9 +205,11 @@ void* handleClient(sockaddr_in client, int len, char* request)
 				else
 					break;
 			}
-			if (Killtime > 10)
-				fprintf(fp, "error pack send failed\n");
-			return NULL;
+			if (Killtime > 10){
+				fprintf(fp, "ERROR: pack send failed\n");
+				printf("ERROR: pack send failed\n");
+			}
+			return;
 		}
 		//开始传输
 		start = clock();
@@ -226,9 +230,9 @@ void* handleClient(sockaddr_in client, int len, char* request)
 			//如果没有收到数据
 			if (res == -1) {
 				if (Numbertokill > 10) {
-					printf("No acks get.transmission failed\n");
+					printf("No acks get. transmission failed\n");
 					print_time(fp);
-					fprintf(fp, "Upload file: %s failed.\n", name);//打印错误提示并结束传输
+					fprintf(fp, "No acks get.\nUpload file: %s failed.\n", name);//打印错误提示并结束传输
 					break;
 				}
 				//重传上一个数据包
@@ -245,10 +249,11 @@ void* handleClient(sockaddr_in client, int len, char* request)
 					else
 						break;
 				}
-				if (Killtime > 10)
+				if (Killtime > 10) {
+					fprintf(fp, "ERROR: pack send failed\n");
 					printf("last blk send failed\n");
 					break;
-
+				}
 				Numbertokill++;
 			}
 			//收到数据
@@ -267,7 +272,7 @@ void* handleClient(sockaddr_in client, int len, char* request)
 							runtime = (double)(end - start) / CLOCKS_PER_SEC; //计算传输时间
 							print_time(fp);
 							printf("Average transmission rate: %.2lf kb/s\n", Fullsize / runtime / 1000);
-							fprintf(fp, "Upload file: %s finished. resent times: %d. Fullsize: %d\n", name, RST, Fullsize);
+							fprintf(fp, "Upload file: %s finished. Resent times: %d. Fullsize: %d\n", name, RST, Fullsize);
 							break;
 						}
 
@@ -278,7 +283,23 @@ void* handleClient(sockaddr_in client, int len, char* request)
 						Fullsize += datalen - 4;
 						Numbertokill = 1;			//重置当前数据包的重发次数
 						if (sendData == NULL) {		//构造数据包失败
-							std::cout << "File reading mistakes!" << std::endl;
+							std::cout << "File reading mistake!" << std::endl;
+							print_time(fp);
+							sendData = ErrorPack(0, datalen, fp);
+							sendlen = sendto(sock, sendData, datalen, 0, (sockaddr*)&client, sizeof(client));
+							Killtime = 1;
+							while (sendlen != datalen) {
+								if (Killtime <= 10) {
+									sendlen = sendto(sock, sendData, buflen, 0, (sockaddr*)&client, sizeof(client));
+									Killtime++;
+								}
+								else
+									break;
+							}
+							if (Killtime > 10) {
+								fprintf(fp, "ERROR: pack send failed\n");
+								printf("ERROR: pack send failed\n");
+							}
 							break;
 						}
 						sendlen = sendto(sock, sendData, datalen, 0, (sockaddr*)&client, sizeof(client));		//将刚刚构造的DATA包发送出去
@@ -292,8 +313,11 @@ void* handleClient(sockaddr_in client, int len, char* request)
 							else
 								break;
 						}
-						if (Killtime > 10)
-							continue;
+						if (Killtime > 10) {
+							fprintf(fp, "ERROR: pack send failed\n");
+							printf("ERROR: pack send failed\n");
+							break;
+						}
 						std::cout << "Pack No=" << block << std::endl;		//向用户输出当前正在传输的数据包的编号
 					}
 				}
@@ -304,31 +328,53 @@ void* handleClient(sockaddr_in client, int len, char* request)
 					errorcode = ntohs(errorcode);
 					char strError[1024];		//继续拆解并获得错误详细信息
 					int iter = 0;
-					while (*(buf + iter + 4) += 0) {
+					while (*(buf + iter + 4) != '\0') {
 						memcpy(strError + iter, buf + iter + 4, 1);
 						++iter;
 					}
 					*(strError + iter + 1) = '\0';
-					std::cout << "Error" << errorcode << " " << strError << std::endl;		//输出错误信息
+					std::cout << "Error " << errorcode << ": " << strError << std::endl;		//输出错误信息
 					print_time(fp);
-					fprintf(fp, "Error %d %s\n", errorcode, strError);		//向日志文件输出错误信息
+					fprintf(fp, "Error %d: %s\n", errorcode, strError);		//向日志文件输出错误信息
 					break;		//结束传输
 				}
 			}
 			res = recvfrom(sock, buf, 1024, 0, (sockaddr*)&client, &len);
 		}
-
+		fclose(f);
 	}
 	//上传请求，接收文件
 	else if (op == 2) {
 		printf("WRQ上传\n");
 		print_time(fp);
 		fprintf(fp, "receive WRQ for file: %s , datatype: %s\n", name, type);
+		//已存在
 
+
+
+		//不存在
 		FILE* f = fopen(name, "wb");
 		if (f == NULL) {
 			std::cout << "File" << name << "open failed!" << std::endl;
-			return NULL;
+			fprintf(fp, "File not found or open failed\n");
+			int datalen = 0;
+			print_time(fp);
+			char* errdata = ErrorPack(1, datalen, fp);
+			sendlen = sendto(sock, errdata, datalen, 0, (sockaddr*)&client, sizeof(client));
+			Killtime = 1;
+			while (sendlen != datalen) {
+				if (Killtime <= 10) {
+					sendlen = sendto(sock, errdata, buflen, 0, (sockaddr*)&client, sizeof(client));
+					Killtime++;
+				}
+				else
+					break;
+			}
+			if (Killtime > 10) {
+				fprintf(fp, "ERROR: pack send failed\n");
+				printf("ERROR: pack send failed\n");
+			}
+			return;
 		}
 		start = clock();
 		short no = 0;
@@ -337,7 +383,7 @@ void* handleClient(sockaddr_in client, int len, char* request)
 		sendlen = sendto(sock, ack, 4, 0, (sockaddr*)&client, sizeof(client));
 		Killtime = 1;
 		while (sendlen != 4) {		//发送长度不为4说明ACK包sendto出现了错误
-			std::cout << "resend last ack failed: " << Killtime << "times" << std::endl;
+			std::cout << "resend ack0 failed: " << Killtime << "times" << std::endl;
 			if (Killtime <= 10) {
 				sendlen = sendto(sock, ack, 4, 0, (sockaddr*)&client, sizeof(client));
 				Killtime++;
@@ -346,8 +392,9 @@ void* handleClient(sockaddr_in client, int len, char* request)
 				break;
 		}
 		if (Killtime > 10) {
-			print_time(fp);
-			fprintf(fp, "connect failed.\n");
+			printf("ACK0 send failed\n");
+			fprintf(fp, "ERROR: connect failed.\n");
+			return;
 		}
 
 		//开始接收
@@ -361,17 +408,17 @@ void* handleClient(sockaddr_in client, int len, char* request)
 			res = recvfrom(sock, buf, 1024, 0, (sockaddr*)&client, &len);
 			if (res == -1) {
 				if (Numbertokill > 10) {
-					printf("No block get.transmission failed\n");
+					printf("No block get. transmission failed\n");
 					print_time(fp);
-					fprintf(fp, "Download file: %s failed.\n", name);
+					fprintf(fp, "No block get.\nDownload file: %s failed.\n", name);
 					break;
 				}
 				sendlen = sendto(sock, commonbuf, 4, 0, (sockaddr*)&client, sizeof(client));
 				RST++;
-				std::cout << "resend last blk" << std::endl;
+				std::cout << "resend last ack" << std::endl;
 				Killtime = 1;
 				while (sendlen != 4) {
-					std::cout << "resend last blk failed:" << Killtime << "times" << std::endl;
+					std::cout << "resend last ack failed:" << Killtime << "times" << std::endl;
 					if (Killtime <= 10) {
 						sendlen = sendto(sock, commonbuf, 4, 0, (sockaddr*)&client, sizeof(client));
 						Killtime++;
@@ -379,8 +426,11 @@ void* handleClient(sockaddr_in client, int len, char* request)
 					else
 						break;
 				}
-				if (Killtime > 10)
+				if (Killtime > 10) {
+					fprintf(fp, "ERROR: last ack send failed\n");
+					printf("last ack send failed\n");
 					break;
+				}
 				Numbertokill++;
 			}
 			if (res > 0) {
@@ -396,7 +446,7 @@ void* handleClient(sockaddr_in client, int len, char* request)
 					sendlen = sendto(sock, ack, 4, 0, (sockaddr*)&client, sizeof(client));
 					Killtime = 1;
 					while (sendlen != 4) {		//发送长度不为4说明ACK包sendto出现了错误
-						std::cout << "resend last ack failed: " << Killtime << "times" << std::endl;
+						std::cout << "resend ack failed: " << Killtime << "times" << std::endl;
 						if (Killtime <= 10) {
 							sendlen = sendto(sock, ack, 4, 0, (sockaddr*)&client, sizeof(client));
 							Killtime++;
@@ -404,32 +454,33 @@ void* handleClient(sockaddr_in client, int len, char* request)
 						else
 							break;
 					}
-					if (Killtime > 10)
+					if (Killtime > 10) {
+						fprintf(fp, "ERROR: ack send failed\n");
+						printf("ack send failed\n");
 						break;
+					}
 
-					if (no == want_recv) {		//want recv变量维护用户当前期望收到的下一个数据包的编号
+					if (no == want_recv) {		//want_recv变量维护用户当前期望收到的下一个数据包的编号
 						Numbertokill = 1;
 						memcpy(commonbuf, ack, 4);//更新commonbuf的内容，当超时发生时，客户端将会不断重传对当前收到的编号最大的一个(而非最近收到的一个)DATA的ACK
 						fwrite(buf + 4, res - 4, 1, f);
 						Fullsize += res - 4;
 						if (res - 4 >= 0 && res - 4 < 512) {		//如果当前数据包的大小小于512bytes，说明传输完毕
 							std::cout << "download finished!" << std::endl;
-							finish = 1;
-							recvTimeout = 5000;
-							setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&recvTimeout, sizeof(int));
-
 							end = clock();
 							runtime = (double)(end - start) / CLOCKS_PER_SEC;		//计算时间
 							print_time(fp);
 							printf("Average transmission rate: %.2lf kb/s\n", Fullsize / runtime / 1000);
-							fprintf(fp, "Download file: %s finished,resent times: %d;Fullsize: %d\n", name, RST, Fullsize);
+							fprintf(fp, "Download file: %s finished. Resent times: %d. Fullsize: %d\n", name, RST, Fullsize);
 
+							//多余包处理,等待5s
+							finish = 1;
+							recvTimeout = 5000;
+							setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&recvTimeout, sizeof(int));
 							while (-1 != recvfrom(sock, buf, 1024, 0, (sockaddr*)&client, &len)) {
 								sendlen = sendto(sock, commonbuf, 4, 0, (sockaddr*)&client, sizeof(client));
-								std::cout << "resend last blk" << std::endl;
 								Killtime = 1;
 								while (sendlen != 4) {
-									std::cout << "resend last blk failed:" << Killtime << "times" << std::endl;
 									if (Killtime <= 10) {
 										sendlen = sendto(sock, commonbuf, 4, 0, (sockaddr*)&client, sizeof(client));
 										Killtime++;
@@ -455,14 +506,14 @@ void* handleClient(sockaddr_in client, int len, char* request)
 					errorcode = ntohs(errorcode);
 					char strError[1024];		//继续拆解并获得错误详细信息
 					int iter = 0;
-					while (*(buf + iter + 4) += 0) {
+					while (*(buf + iter + 4) != '\0') {
 						memcpy(strError + iter, buf + iter + 4, 1);
 						++iter;
 					}
 					*(strError + iter + 1) = '\0';
-					std::cout << "Error" << errorcode << " " << strError << std::endl;		//输出错误信息
+					std::cout << "Error " << errorcode << ": " << strError << std::endl;		//输出错误信息
 					print_time(fp);
-					fprintf(fp, "Error %d %s\n", errorcode, strError);		//向日志文件输出错误信息
+					fprintf(fp, "Error %d: %s\n", errorcode, strError);		//向日志文件输出错误信息
 					break;		//结束传输
 				}
 			}
@@ -471,13 +522,13 @@ void* handleClient(sockaddr_in client, int len, char* request)
 	}
 	else {
 		printf("request error");
-		return NULL;
+		return;
 	}
 	closesocket(sock);
 	fprintf(fp, "\n");
 	fclose(fp);
 
-	return NULL;
+	return;
 }
 
 int main() {
@@ -485,7 +536,7 @@ int main() {
 	sockaddr_in addr;
 
 	/***********************更改本机IP***********************/
-	addr = getAddr("10.21.52.25", 69);
+	addr = getAddr("127.0.0.1", 69);
 	/********************************************************/
 
 	if (-1 == (bind(listen_sock, (LPSOCKADDR)&addr, sizeof(addr))))
