@@ -1,0 +1,20 @@
+ [ Tue Oct 29 01:34:56 2024 ] send WRQ for file: ABC.txt
+ [ Tue Oct 29 01:35:14 2024 ] send RRQ for file: sd
+ [ Tue Oct 29 01:35:26 2024 ] Download file:sd failed.
+ [ Tue Oct 29 01:36:00 2024 ] send WRQ for file: asd
+ [ Tue Oct 29 01:36:07 2024 ] send WRQ for file: sd
+ [ Tue Oct 29 01:36:18 2024 ] Upload file:sd failed.
+ [ Tue Oct 29 01:36:30 2024 ] send WRQ for file: sd
+ [ Tue Oct 29 01:36:41 2024 ] Upload file:sd failed.
+ [ Tue Oct 29 02:25:45 2024 ] send WRQ for file: aaa
+ [ Tue Oct 29 02:26:12 2024 ] send WRQ for file: aaa
+ [ Tue Oct 29 08:55:13 2024 ] send WRQ for file: qq
+ [ Tue Oct 29 08:55:38 2024 ] send RRQ for file: qq
+ [ Tue Oct 29 08:55:49 2024 ] Download file:qq failed.
+ [ Tue Oct 29 09:20:26 2024 ] send WRQ for file: cuplode.txt
+ [ Tue Oct 29 09:20:26 2024 ] Upload file: cuplode.txt finished. resent times: 0. Fullsize: 9360
+ [ Tue Oct 29 09:23:59 2024 ] send WRQ for file: aa
+ [ Tue Oct 29 09:38:59 2024 ] send WRQ for file: aa.txt
+ [ Tue Oct 29 09:38:59 2024 ] Upload file: aa.txt finished. resent times: 0. Fullsize: 8
+ [ Tue Oct 29 09:39:18 2024 ] send WRQ for file: aa.txt
+ [ Tue Oct 29 09:39:18 2024 ] Upload file: aa.txt finished. resent times: 0. Fullsize: 8
